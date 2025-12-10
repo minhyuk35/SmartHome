@@ -1,5 +1,7 @@
 import javax.swing.*;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SmartHomeGUI {
@@ -14,12 +16,25 @@ public class SmartHomeGUI {
     private JLabel lblGas, lblTemp, lblDust, lblPir;
     private JLabel lblLedStatus;
     private AtomicBoolean voiceRecording = new AtomicBoolean(false);
+    private final List<JComponent> gatedControls = new ArrayList<>();
+    private boolean unlockedOnce = false;
 
     public SmartHomeGUI(TcpServer commandServer, SensorTcpServer sensorServer, DoorlockServer doorlockServer, EventTcpServer eventServer) {
         this.commandServer = commandServer;
         this.sensorServer  = sensorServer;
         this.doorlockServer = doorlockServer;
         this.eventServer = eventServer;
+    }
+
+    private void registerControl(JComponent component) {
+        component.setEnabled(unlockedOnce);
+        gatedControls.add(component);
+    }
+
+    private void setControlsEnabled(boolean enabled) {
+        for (JComponent component : gatedControls) {
+            component.setEnabled(enabled);
+        }
     }
 
     public void showWindow() {
@@ -160,6 +175,14 @@ public class SmartHomeGUI {
             commandServer.sendCommand("RGB_SET " + r + " " + g + " " + b);
         });
 
+        for (JButton b : btns) {
+            registerControl(b);
+        }
+        registerControl(sliderR);
+        registerControl(sliderG);
+        registerControl(sliderB);
+        registerControl(btnApplyColor);
+
         frame.add(rgbPanel, BorderLayout.SOUTH);
 
         // ================================
@@ -206,6 +229,10 @@ public class SmartHomeGUI {
 
                 if (event.equals("UNLOCKED")) {
                     lblDoorlock.setBackground(Color.GREEN);
+                    if (!unlockedOnce) {
+                        unlockedOnce = true;
+                        setControlsEnabled(true);
+                    }
                 } else if (event.equals("LOCKED")) {
                     lblDoorlock.setBackground(Color.RED);
                 } else if (event.equals("ALERT_FAIL_3")) {
