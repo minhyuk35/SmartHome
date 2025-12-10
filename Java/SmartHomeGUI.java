@@ -1,5 +1,6 @@
 import javax.swing.*;
 import java.awt.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SmartHomeGUI {
 
@@ -11,6 +12,8 @@ public class SmartHomeGUI {
     private JLabel lblDoorlock;
 
     private JLabel lblGas, lblTemp, lblDust, lblPir;
+    private JLabel lblLedStatus;
+    private AtomicBoolean voiceRecording = new AtomicBoolean(false);
 
     public SmartHomeGUI(TcpServer commandServer, SensorTcpServer sensorServer, DoorlockServer doorlockServer, EventTcpServer eventServer) {
         this.commandServer = commandServer;
@@ -27,7 +30,7 @@ public class SmartHomeGUI {
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
         // ================================
-        // 🔥 상단 센서 패널
+        // 상단 센서 패널
         // ================================
         JPanel sensorPanel = new JPanel();
         sensorPanel.setLayout(new GridLayout(3, 2));
@@ -38,6 +41,7 @@ public class SmartHomeGUI {
         lblDust = new JLabel("DUST: ---", SwingConstants.CENTER);
         lblPir  = new JLabel("PIR: ---",  SwingConstants.CENTER);
         lblDoorlock = new JLabel("DOOR: ---", SwingConstants.CENTER);
+        lblLedStatus = new JLabel("LED: OFF", SwingConstants.CENTER);
 
         Font f = new Font("맑은 고딕", Font.BOLD, 16);
         lblGas.setFont(f);
@@ -51,15 +55,16 @@ public class SmartHomeGUI {
         sensorPanel.add(lblDust);
         sensorPanel.add(lblPir);
         sensorPanel.add(lblDoorlock);
+        sensorPanel.add(lblLedStatus);
 
         frame.add(sensorPanel, BorderLayout.NORTH);
 
 
         // ================================
-        // 🔥 버튼 패널
+        // 중단 버튼 패널
         // ================================
         JPanel buttonPanel = new JPanel();
-        buttonPanel.setLayout(new GridLayout(4, 2, 10, 10));
+        buttonPanel.setLayout(new GridLayout(5, 2, 10, 10));
 
         Dimension btnSize = new Dimension(150, 50);
 
@@ -71,10 +76,12 @@ public class SmartHomeGUI {
         JButton btnFanOff = new JButton("FAN OFF");
         JButton btnRgbWhite = new JButton("RGB WHITE");
         JButton btnRgbOff   = new JButton("RGB OFF");
+        JButton btnVoice  = new JButton("🎤 음성 인식");
 
         JButton[] btns = {
             btnLedOn, btnLedOff, btnSleep, btnWarm,
-            btnFanOn, btnFanOff, btnRgbWhite, btnRgbOff
+            btnFanOn, btnFanOff, btnRgbWhite, btnRgbOff,
+            btnVoice
         };
 
         for (JButton b : btns) {
@@ -90,13 +97,42 @@ public class SmartHomeGUI {
         btnFanOff.addActionListener(e -> commandServer.sendCommand("FAN_OFF"));
         btnRgbWhite.addActionListener(e -> commandServer.sendCommand("RGB_ON"));
         btnRgbOff.addActionListener(e -> commandServer.sendCommand("RGB_OFF"));
+        
+        // 음성 인식 토글 버튼 (누르면 START/STOP 전송)
+        btnVoice.addActionListener(e -> {
+            new Thread(() -> {
+                try {
+                    if (!voiceRecording.get()) {
+                        java.net.Socket s = new java.net.Socket("127.0.0.1", 40191);
+                        java.io.PrintWriter out = new java.io.PrintWriter(s.getOutputStream(), true);
+                        out.println("START_RECORDING");
+                        out.close();
+                        s.close();
+                        voiceRecording.set(true);
+                        SwingUtilities.invokeLater(() -> btnVoice.setText("⏹ 음성 인식 중지"));
+                        System.out.println("[JAVA] 음성 인식 시작 요청 전송");
+                    } else {
+                        java.net.Socket s = new java.net.Socket("127.0.0.1", 40191);
+                        java.io.PrintWriter out = new java.io.PrintWriter(s.getOutputStream(), true);
+                        out.println("STOP_RECORDING");
+                        out.close();
+                        s.close();
+                        voiceRecording.set(false);
+                        SwingUtilities.invokeLater(() -> btnVoice.setText("🎤 음성 인식"));
+                        System.out.println("[JAVA] 음성 인식 중지 요청 전송");
+                    }
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(null, "Python 서버 연결 실패\n" + ex.getMessage(), "에러", JOptionPane.ERROR_MESSAGE);
+                }
+            }).start();
+        });
 
         for (JButton b : btns) buttonPanel.add(b);
 
         frame.add(buttonPanel, BorderLayout.CENTER);
 
         // ================================
-        // 🎨 RGB 슬라이더
+        // 하단 RGB 슬라이더
         // ================================
         JPanel rgbPanel = new JPanel();
         rgbPanel.setLayout(new GridLayout(4, 1));
@@ -127,7 +163,7 @@ public class SmartHomeGUI {
         frame.add(rgbPanel, BorderLayout.SOUTH);
 
         // ================================
-        // ⭐ 센서 업데이트 리스너
+        // 센서 서버 데이터 업데이트
         // ================================
         sensorServer.addSensorListener((gas, temp, dust, pir) -> {
             SwingUtilities.invokeLater(() -> {
@@ -138,9 +174,32 @@ public class SmartHomeGUI {
             });
         });
 
-        // ================================
-        // ⭐ 도어락 이벤트 리스너
-        // ================================
+        // TcpServer에서 받는 명령을 GUI 상태에 반영
+        commandServer.addCommandListener(cmd -> {
+            System.out.println("[JAVA-GUI] TcpServer 명령 수신: " + cmd);
+
+            SwingUtilities.invokeLater(() -> {
+                String c = cmd.trim();
+                if (c.equalsIgnoreCase("LED_ON")) {
+                    lblLedStatus.setText("LED: ON");
+                    lblLedStatus.setOpaque(true);
+                    lblLedStatus.setBackground(Color.GREEN);
+                } else if (c.equalsIgnoreCase("LED_OFF")) {
+                    lblLedStatus.setText("LED: OFF");
+                    lblLedStatus.setOpaque(true);
+                    lblLedStatus.setBackground(Color.LIGHT_GRAY);
+                } else if (c.startsWith("RGB_SET") || c.equalsIgnoreCase("RGB_ON")) {
+                    lblLedStatus.setText("LED: RGB");
+                    lblLedStatus.setOpaque(true);
+                    lblLedStatus.setBackground(Color.MAGENTA);
+                }
+            });
+
+            // 음성(STT) 등에서 들어온 명령을 IoT 클라이언트에도 브로드캐스트
+            commandServer.sendCommand(cmd);
+        });
+
+        // 도어락 이벤트 리스너
         doorlockServer.addDoorlockListener(event -> {
             SwingUtilities.invokeLater(() -> {
                 lblDoorlock.setText("DOOR: " + event);

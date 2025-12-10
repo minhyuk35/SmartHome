@@ -1,18 +1,21 @@
-import java.io.*;
-import java.net.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.ServerSocket;
+import java.net.Socket;
 
 public class SensorTcpServer {
 
     private int port;
 
-    // Python → Java : 센서값 전달 리스너
+    // Python -> Java : 센서값 전달 리스너
     private SensorListener sensorListener;
 
     public SensorTcpServer(int port) {
         this.port = port;
     }
 
-    // GUI에게 센서 전달하기 위한 콜백
+    // GUI에 센서 값 전달을 위한 콜백
     public interface SensorListener {
         void onSensorUpdate(String gas, String temp, String dust, int pir);
     }
@@ -24,11 +27,11 @@ public class SensorTcpServer {
     // =============== 센서 수신 서버 ===============
     public void start() {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.println("[JAVA] SensorServer 시작됨, 포트: " + port);
+            System.out.println("[JAVA] SensorServer 대기, 포트: " + port);
 
-            // Python 센서 스트림은 계속 연결 유지
+            // Python 센서 스트림과 지속 연결
             Socket clientSocket = serverSocket.accept();
-            System.out.println("[JAVA] 센서 클라이언트 연결됨: " + clientSocket.getInetAddress());
+            System.out.println("[JAVA] 센서 클라이언트 연결: " + clientSocket.getInetAddress());
 
             BufferedReader in = new BufferedReader(
                     new InputStreamReader(clientSocket.getInputStream(), "UTF-8")
@@ -42,7 +45,7 @@ public class SensorTcpServer {
                 }
             }
 
-            System.out.println("[JAVA] 센서 연결 종료됨");
+            System.out.println("[JAVA] 센서 연결 종료");
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -52,7 +55,7 @@ public class SensorTcpServer {
     // SENSOR 메시지 파싱
     private void parseSensorPacket(String msg) {
         try {
-            // SENSOR GAS=123 METHAN=1 TEMP=25.50 HUMI=36.70 PM1=7 PM25=5 PM10=8 PIR=0
+            // 예: SENSOR GAS=123 METHAN=1 TEMP=25.50 HUMI=36.70 PM1=7 PM25=5 PM10=8 PIR=0
             String[] p = msg.split(" ");
 
             String gas  = p[1].split("=")[1];

@@ -3,41 +3,42 @@ import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-public class DoorlockServer {
+public class WhisperSTTServer {
 
     private int port;
-    private DoorlockListener listener;
+    private WhisperListener listener;
 
-    public DoorlockServer(int port) {
+    public WhisperSTTServer(int port) {
         this.port = port;
     }
 
-    public interface DoorlockListener {
-        void onDoorlockEvent(String event);
+    public interface WhisperListener {
+        void onTranscription(String text);
     }
 
-    public void addDoorlockListener(DoorlockListener l) {
+    public void addWhisperListener(WhisperListener l) {
         this.listener = l;
     }
 
     public void start() {
         new Thread(() -> {
             try (ServerSocket serverSocket = new ServerSocket(port)) {
-                System.out.println("[JAVA] Doorlock 서버 시작, 포트: " + port);
+                System.out.println("[JAVA] Whisper STT 서버 시작, 포트: " + port);
 
                 while (true) {
                     Socket client = serverSocket.accept();
-                    System.out.println("[JAVA] 도어락 클라이언트 연결: " + client.getInetAddress());
+                    System.out.println("[JAVA] Whisper 클라이언트 연결: " + client.getInetAddress());
 
                     BufferedReader in = new BufferedReader(
                         new InputStreamReader(client.getInputStream())
                     );
 
-                    String line = in.readLine();
-                    if (line != null) {
-                        System.out.println("[JAVA] 도어락 이벤트 수신: " + line);
-
-                        if (listener != null) listener.onDoorlockEvent(line);
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        System.out.println("[JAVA] Whisper 수신: " + line);
+                        if (listener != null) {
+                            listener.onTranscription(line);
+                        }
                     }
 
                     client.close();
