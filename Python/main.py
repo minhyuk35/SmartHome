@@ -1,7 +1,6 @@
 """
-음성 인식 → Java 서버 → Jupyter 연동 메인 스크립트
-문 열림 이벤트 또는 Java GUI 버튼으로 STT 실행
-Whisper 사용 (한국어 인식 최적화)
+[종합 PC 비서]
+Whisper 음성 + Google TTS + GUI 제어 + 🔥버튼식 얼굴 인식 (안정화 버전)
 """
 
 import socket
@@ -11,306 +10,389 @@ import sounddevice as sd
 import numpy as np
 from pathlib import Path
 import threading
-
+import requests       
+import urllib.parse   
+import os
+from playsound import playsound
+import cv2                 
+import face_recognition    
 
 # ================================
-# 🔥 자바로 명령 보내기
+# ⚙️ 설정
 # ================================
+JAVA_IP = "127.0.0.1"    
+CMD_PORT = 39186         
+VOICE_SERVER_PORT = 40191
+DOOR_EVENT_PORT = 39189
+
+# 상태 플래그
+is_registering_mode = False   # 등록 모드 확인
+is_active_recognition = False # 인식 모드 확인 (버튼 누를 때만 True)
+my_command_lock = False       # 메아리 방지
+
+# ================================
+# 🔊 TTS 및 통신
+# ================================
+def speak_answer(text):
+    try:
+        # print(f"[TTS] 💬 {text}")
+        enc_text = urllib.parse.quote(text)
+        url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={enc_text}&tl=ko&client=tw-ob"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        response = requests.get(url, headers=headers)
+        filename = "pc_voice_temp.mp3"
+        
+        # 기존 파일 삭제 (충돌 방지)
+        if os.path.exists(filename):
+            try: os.remove(filename)
+            except: pass
+            
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+            
+        playsound(filename)
+        
+        # 재생 후 삭제
+        try: os.remove(filename)
+        except: pass
+    except: pass
+
 def send_to_java(cmd):
-    """Java TcpServer에 명령 전송 (자동 재시도)"""
+    global my_command_lock
+    my_command_lock = True
+    def release_lock():
+        global my_command_lock
+        time.sleep(1.5)
+        my_command_lock = False
+    threading.Thread(target=release_lock).start()
+
     max_retries = 3
     for attempt in range(max_retries):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(2)
-            print(f"[SEND] Java 서버 연결 시도 ({attempt+1}/{max_retries})...")
-            s.connect(("127.0.0.1", 39186))  # 로컬호스트
+            s.connect((JAVA_IP, CMD_PORT))
             s.sendall((cmd + "\n").encode())
             s.close()
-            print(f"[SEND] ✅ JAVA로 전송됨: {cmd}")
+            print(f"[SEND] 📤 JAVA 전송: {cmd}")
             return True
-        except Exception as e:
-            print(f"[SEND] ❌ 시도 {attempt+1} 실패: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(0.5)  # 재시도 전 대기
-    
-    print(f"[SEND] ⚠️  모든 재시도 실패: {cmd}")
+        except:
+            if attempt < max_retries - 1: time.sleep(0.5)
     return False
-# ================================
-# 🔥 1) Whisper STT 모델 로드
-# ================================
-
-print("📢 Whisper 모델 로딩 중...")
-print("⚠️  첫 실행 시 모델 다운로드 (약 1-2GB, 시간 소요)")
-
-# base 모델 사용 (small보다 정확, medium보다 빠름)
-model = whisper.load_model("base", device="cpu")
-
-print("✅ Whisper 모델 로드 완료")
-
 
 # ================================
-# 🔥 음성 인식 플래그 (토글 모드)
+# 📸 얼굴 등록 모드 (메모리 패치 적용)
 # ================================
-# `running_event`가 set 상태면 계속 녹음/인식 모드
-running_event = threading.Event()
-
-
-# ================================
-# 🔥 2) 도어락 이벤트 수신 (별도 스레드)
-# ================================
-def listen_door_events():
-    """도어락 이벤트 수신 - 문이 열리면 계속 음성 인식"""
-    SERVER_IP = "127.0.0.1"
-    SERVER_PORT = 39189
-
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((SERVER_IP, SERVER_PORT))
-        print("[PY] ✅ 자바 이벤트 서버 접속 완료")
-
-        while True:
-            try:
-                data = sock.recv(1024).decode().strip()
-                if not data:
-                    continue
-
-                print(f"[PY] 도어락 상태: {data}")
-
-                if data == "UNLOCKED":
-                    print("🚪 문 열림! 자동 음성 인식 모드 시작")
-                    start_recording()
-            except Exception as e:
-                print(f"도어락 수신 오류: {e}")
-                break
-
-        sock.close()
-    except ConnectionRefusedError:
-        print("[PY] ⚠️  도어락 서버 미연결 (GUI 버튼으로만 진행)")
-    except Exception as e:
-        print(f"[PY] ⚠️  도어락 오류: {e}")
-
-
-# 도어락 이벤트 리스너 스레드 시작
-door_thread = threading.Thread(target=listen_door_events, daemon=True)
-door_thread.start()
-
-
-# ================================
-# 🔥 3) Java GUI 음성 인식 서버 (별도 스레드)
-# ================================
-def listen_voice_server():
-    """Java GUI에서 음성 인식 요청을 받음"""
-    server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_sock.bind(("127.0.0.1", 40191))
-    server_sock.listen(5)
+def start_face_registration():
+    global is_registering_mode
+    is_registering_mode = True 
     
-    print("[PY] ✅ 음성 인식 서버 시작 (포트 40191)")
+    print("📸 [얼굴 등록] 카메라 가동...")
+    speak_answer("얼굴 등록 모드입니다.")
+    
+    # 카메라 0번 (안 되면 1번으로 변경)
+    cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        print("❌ 카메라를 열 수 없습니다.")
+        speak_answer("카메라 오류가 발생했습니다.")
+        is_registering_mode = False
+        return
 
     while True:
+        ret, frame = cap.read()
+        if not ret: 
+            print("❌ 프레임을 읽을 수 없습니다.")
+            break
+        
+        cv2.putText(frame, "Press 's' to Save, 'q' to Quit", (50, 50), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.imshow('Register Face', frame)
+        
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('s'): 
+            try:
+                # 1. BGR -> RGB 변환 (OpenCV 함수 사용)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # 2. 메모리 강제 정렬 (dlib 오류 해결 핵심)
+                rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+                
+                # 3. 얼굴 찾기
+                boxes = face_recognition.face_locations(rgb)
+                
+                if boxes:
+                    enc = face_recognition.face_encodings(rgb, boxes)[0]
+                    np.save("owner_face.npy", enc)
+                    print("✅ 얼굴 저장 완료")
+                    speak_answer("얼굴이 등록되었습니다.")
+                    break
+                else:
+                    print("❌ 얼굴 미감지")
+                    speak_answer("얼굴을 찾을 수 없습니다.")
+            except Exception as e:
+                print(f"❌ 등록 에러: {e}")
+                speak_answer("오류가 발생했습니다.")
+
+        elif key == ord('q'):
+            print("취소됨")
+            speak_answer("취소했습니다.")
+            break
+            
+    cap.release()
+    cv2.destroyAllWindows()
+    is_registering_mode = False
+    print("👀 다시 대기 모드")
+
+# ================================
+# 👁️ [핵심] 버튼식 얼굴 인식 스레드 (안정화)
+# ================================
+def face_recognition_loop():
+    global is_active_recognition, is_registering_mode
+    print("[Face] 🙂 대기 중 (버튼을 누르면 켜집니다)")
+    
+    video_capture = None
+    last_unlock_time = 0 # 쿨타임 계산용
+
+    while True:
+        # 1. 카메라를 꺼야 하는 조건 확인
+        # (활성화 요청 없음 OR 등록 중 OR 쿨타임 10초 미만)
+        current_time = time.time()
+        is_cooldown = (current_time - last_unlock_time < 10)
+
+        if not is_active_recognition or is_registering_mode or is_cooldown:
+            if video_capture is not None:
+                video_capture.release()
+                video_capture = None
+                if is_cooldown: 
+                    print(f"[Face] ⏳ 쿨타임 대기 ({10 - int(current_time - last_unlock_time)}초)")
+                else:
+                    print("[Face] 💤 카메라 대기 모드")
+            
+            # 대기 중일 땐 CPU를 쉬게 해줌
+            time.sleep(1) 
+            continue
+
+        # 2. 카메라 켜기
+        if video_capture is None:
+            video_capture = cv2.VideoCapture(0)
+            if not video_capture.isOpened():
+                speak_answer("카메라를 켤 수 없습니다.")
+                is_active_recognition = False
+                continue
+            print("[Face] 📸 카메라 작동 시작! 얼굴 찾는 중...")
+
+        # 3. 데이터 로드
+        try: owner_encoding = np.load("owner_face.npy")
+        except: 
+            speak_answer("먼저 얼굴 등록을 해주세요.")
+            is_active_recognition = False
+            continue
+
+        ret, frame = video_capture.read()
+        if not ret: continue
+
+        # 4. 인식 시도
         try:
-            client_sock, addr = server_sock.accept()
-            print(f"[PY] Java GUI 연결: {addr}")
+            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            
+            # [안전 변환]
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            rgb_small_frame = np.ascontiguousarray(rgb_small_frame, dtype=np.uint8)
+            
+            face_locations = face_recognition.face_locations(rgb_small_frame)
+            
+            if face_locations:
+                face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+                for face_encoding in face_encodings:
+                    matches = face_recognition.compare_faces([owner_encoding], face_encoding, tolerance=0.45)
+                    
+                    if True in matches:
+                        print("[Face] 🔓 주인님 확인됨!")
+                        speak_answer("주인님이시군요. 문을 열어드립니다.")
+                        send_to_java("UNLOCK")
+                        
+                        # 성공 시점 기록 (쿨타임 시작)
+                        last_unlock_time = time.time()
+                        
+                        # 인식 완료했으니 즉시 종료 (다음 루프에서 카메라 꺼짐)
+                        is_active_recognition = False 
+                        break 
+        except: pass
 
-            data = client_sock.recv(1024).decode().strip()
-            if data == "START_RECORDING":
-                print("[PY] Java GUI에서 START 요청 — 녹음 시작")
-                start_recording()
-                running_event.set()
-            elif data == "STOP_RECORDING":
-                print("[PY] Java GUI에서 STOP 요청 — 녹음 중지 및 인식 시작")
-                running_event.clear()
-                stop_recording_and_process()
+    if video_capture is not None:
+        video_capture.release()
 
-            client_sock.close()
-        except Exception as e:
-            print(f"음성 서버 오류: {e}")
-
-
-# 음성 인식 서버 스레드 시작
-voice_server_thread = threading.Thread(target=listen_voice_server, daemon=True)
-voice_server_thread.start()
+face_thread = threading.Thread(target=face_recognition_loop, daemon=True)
+face_thread.start()
 
 
 # ================================
-# 🔥 오디오 설정 및 녹음
+# 👂 Java GUI 버튼 감시자
 # ================================
+def listen_java_commands():
+    global is_active_recognition
+    print("[Thread] 👁️ GUI 버튼 감시 시작...")
+    
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((JAVA_IP, CMD_PORT))
+            while True:
+                data = sock.recv(1024).decode().strip()
+                if not data: break
+                if my_command_lock: continue
+
+                print(f"[GUI 수신] {data}")
+                
+                # 1. 얼굴 인식 요청
+                if data == "REQ_FACE_UNLOCK":
+                    print("📸 얼굴 인식 요청됨! 10초간 시도")
+                    speak_answer("정면을 봐주세요.")
+                    is_active_recognition = True
+                    
+                    # 10초 뒤 타임아웃 처리
+                    def timeout_timer():
+                        time.sleep(10)
+                        global is_active_recognition
+                        if is_active_recognition:
+                            print("⏰ 타임아웃: 얼굴 인식 실패")
+                            is_active_recognition = False
+                            speak_answer("얼굴이 확인되지 않았습니다.")
+                    threading.Thread(target=timeout_timer).start()
+
+                # 2. 얼굴 등록 요청
+                elif data == "REGISTER_FACE":
+                    threading.Thread(target=start_face_registration).start()
+                
+                # 3. 일반 제어 (TTS 피드백 복구됨!)
+                elif data == "LED_ON":       speak_answer("조명을 켰습니다.")
+                elif data == "LED_OFF":      speak_answer("조명을 껐습니다.")
+                elif data == "FAN_ON":       speak_answer("선풍기를 켰습니다.")
+                elif data == "FAN_OFF":      speak_answer("선풍기를 껐습니다.")
+                elif data == "LIGHT_SLEEP":  speak_answer("수면 모드를 실행합니다.")
+                elif data == "LIGHT_WARM":   speak_answer("따뜻한 조명으로 바꿨습니다.")
+                elif data == "RGB_ON":       speak_answer("무드등을 켰습니다.")
+                elif data == "RGB_OFF":      speak_answer("무드등을 껐습니다.")
+                elif data == "UNLOCK":       speak_answer("문을 열었습니다.")
+
+            sock.close()
+        except: time.sleep(3)
+
+cmd_thread = threading.Thread(target=listen_java_commands, daemon=True)
+cmd_thread.start()
+
+# ================================
+# 🔥 Whisper STT & Logic (기존 유지)
+# ================================
+print("📢 Whisper 모델 로딩 중...")
+model = whisper.load_model("base", device="cpu")
+print("✅ 시스템 준비 완료")
+
+running_event = threading.Event()
 SAMPLE_RATE = 16000
-
-# 녹음 제어 플래그 (START~STOP 사이 계속 녹음)
 is_recording = False
 audio_chunks = []
 stream = None
 
-
 def start_recording():
-    """녹음 시작 (연속 녹음)"""
     global is_recording, stream, audio_chunks
     is_recording = True
     audio_chunks = []
-    
-    print("🎤 마이크 녹음 시작 (STOP 버튼을 누를 때까지 계속 녹음)...")
-    
-    # 오디오 스트림 시작
+    print("🎤 녹음 시작...")
     stream = sd.InputStream(channels=1, samplerate=SAMPLE_RATE, dtype=np.float32)
-    if stream is not None:
-        stream.start()
+    if stream is not None: stream.start()
     
-    # 녹음 데이터 수집 스레드
     def recording_thread():
         global stream
         while is_recording:
             try:
                 if stream is not None:
-                    chunk, _ = stream.read(SAMPLE_RATE // 10)  # 100ms씩 읽기
-                    if chunk is not None and len(chunk) > 0:
-                        audio_chunks.append(chunk)
-            except Exception as e:
-                print(f"녹음 오류: {e}")
-                break
-        
-        if stream is not None:
-            stream.stop()
-            stream.close()
-    
-    import threading
-    rec_thread = threading.Thread(target=recording_thread, daemon=True)
-    rec_thread.start()
-
+                    chunk, _ = stream.read(SAMPLE_RATE // 10)
+                    if chunk is not None: audio_chunks.append(chunk)
+            except: break
+        if stream is not None: stream.stop(); stream.close()
+    threading.Thread(target=recording_thread, daemon=True).start()
 
 def stop_recording():
-    """녹음 중지 및 오디오 반환"""
     global is_recording, audio_chunks
     is_recording = False
-    
-    # 스레드가 정리되도록 잠시 대기
     time.sleep(0.5)
-    
-    if len(audio_chunks) == 0:
-        print("⚠️  녹음된 오디오가 없습니다")
-        return None
-    
-    # 모든 청크를 합치기
-    audio = np.concatenate(audio_chunks, axis=0)
-    print(f"✅ 녹음 완료 ({len(audio) / SAMPLE_RATE:.2f}초)")
-    return audio
+    if not audio_chunks: return None
+    return np.concatenate(audio_chunks, axis=0)
 
-
-def audio_to_file(audio, sample_rate=SAMPLE_RATE):
-    """녹음된 오디오를 임시 파일로 저장"""
-    temp_file = Path(__file__).parent / "temp_audio.wav"
+def audio_to_file(audio):
+    temp = Path(__file__).parent / "temp_audio.wav"
     import soundfile as sf
-    sf.write(str(temp_file), audio, sample_rate)
-    return str(temp_file)
+    sf.write(str(temp), audio, SAMPLE_RATE)
+    return str(temp)
 
-
-# ================================
-# 🔥 음성 명령 처리
-# ================================
 def process_command(text):
-    """Whisper 인식 결과를 명령으로 변환"""
-    print(f"[STT] 인식: {text}")
-
-    text_lower = text.lower()
-
-    # LED 제어
-    if "불 켜" in text_lower or "불켜" in text_lower or "라이트 온" in text_lower:
+    print(f"[STT] 🗣️ {text}")
+    text = text.lower()
+    if "불 켜" in text:
+        speak_answer("네, 조명을 켜겠습니다.")
         send_to_java("LED_ON")
-
-    elif "불 꺼" in text_lower or "불꺼" in text_lower or "라이트 오프" in text_lower:
+    elif "불 꺼" in text:
+        speak_answer("조명을 끕니다.")
         send_to_java("LED_OFF")
-
-    # 선풍기 제어
-    elif "선풍기 켜" in text_lower or "팬 온" in text_lower:
+    elif "선풍기 켜" in text:
+        speak_answer("선풍기를 켭니다.")
         send_to_java("FAN_ON")
-
-    elif "선풍기 꺼" in text_lower or "팬 오프" in text_lower:
+    elif "선풍기 꺼" in text:
+        speak_answer("선풍기를 끕니다.")
         send_to_java("FAN_OFF")
-
-    # 수면 모드
-    elif "수면" in text_lower or "잠자기" in text_lower or "자기" in text_lower:
-        send_to_java("LIGHT_SLEEP")
-
-    # 따뜻한 조명
-    elif "따뜻한" in text_lower or "따뜻해" in text_lower or "웜" in text_lower:
-        send_to_java("LIGHT_WARM")
-
-    # RGB 제어
-    elif "화이트" in text_lower or "하얀" in text_lower:
-        send_to_java("RGB_ON")
-
-    elif "rgb 꺼" in text_lower or "색 꺼" in text_lower:
-        send_to_java("RGB_OFF")
-
-    # 도어
-    elif "문 열어" in text_lower or "도어 열어" in text_lower or "열어" in text_lower:
+    elif "문 열어" in text:
+        speak_answer("문을 엽니다.")
         send_to_java("UNLOCK")
 
-    else:
-        print("❓ 인식된 명령을 찾을 수 없음")
-
-
-# ================================
-# 🔥 4) 녹음 완료 후 인식 처리
-# ================================
 def stop_recording_and_process():
-    """녹음 중지, 파일 저장, Whisper 인식, 명령 전송"""
-    global audio_chunks
-    
     audio = stop_recording()
-    if audio is None:
-        return
-    
-    # 임시 파일로 저장
-    audio_file = audio_to_file(audio)
-    
-    # Whisper로 인식
+    if audio is None: return
+    f = audio_to_file(audio)
     try:
-        print("🔄 Whisper로 인식 중...")
-        result = model.transcribe(audio_file, language="ko", verbose=False)
-        text = str(result["text"]).strip()
-        
-        if text:
-            process_command(text)
-        else:
-            print("⚠️  음성이 인식되지 않음")
-    
-    except Exception as e:
-        print(f"❌ 인식 오류: {e}")
-    
-    # 임시 파일 삭제
-    import os
+        res = model.transcribe(f, language="ko", verbose=False)
+        txt = str(res["text"]).strip()
+        if txt: process_command(txt)
+    except: pass
+    try: os.remove(f)
+    except: pass
+
+def listen_door_events():
     try:
-        os.remove(audio_file)
-    except:
-        pass
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((JAVA_IP, DOOR_EVENT_PORT))
+        while True:
+            data = sock.recv(1024).decode().strip()
+            if not data: break
+            if data == "UNLOCKED":
+                start_recording()
+        sock.close()
+    except: pass
+threading.Thread(target=listen_door_events, daemon=True).start()
 
+def listen_voice_server():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try: s.bind(("127.0.0.1", VOICE_SERVER_PORT)); s.listen(5)
+    except: return
+    while True:
+        try:
+            c, _ = s.accept()
+            d = c.recv(1024).decode().strip()
+            if d == "START_RECORDING": start_recording()
+            elif d == "STOP_RECORDING": stop_recording_and_process()
+            c.close()
+        except: pass
+threading.Thread(target=listen_voice_server, daemon=True).start()
 
-# ================================
-# 🔥 5) Whisper STT 메인 루프
-# ================================
-print("\n" + "="*60)
-print("🎤 실시간 음성 인식 준비 완료!")
-print("="*60)
-print("명령어 예시:")
-print("  - '불 켜', '불 꺼'")
-print("  - '선풍기 켜', '선풍기 꺼'")
-print("  - '수면 모드', '따뜻한 모드'")
-print("  - '문 열어'")
-print("="*60)
-print("👉 Java GUI의 '🎤 음성 인식' 버튼을 누르거나")
-print("👉 도어락이 열리면 자동으로 시작됩니다\n")
+print("\n=== [PC 비서 시스템 가동] ===")
+print("1. 음성 인식 (Whisper)")
+print("2. GUI 연동 (Toss Style)")
+print("3. 얼굴 인식/등록 (절전 모드)")
+print("============================")
 
 try:
-    # 모든 리스너 스레드가 준비될 때까지 대기
-    time.sleep(1)
-    print("[PY] ✅ 모든 서버 준비 완료. 이제 START 신호를 기다립니다...")
-    
-    # 이 주 루프는 특별히 할 일이 없으므로 계속 대기
-    while True:
-        time.sleep(1)
-
-except KeyboardInterrupt:
-    print("\n\n👋 프로그램 종료")
-    is_recording = False
+    while True: time.sleep(1)
+except KeyboardInterrupt: print("종료")
