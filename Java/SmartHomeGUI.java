@@ -1,8 +1,8 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SmartHomeGUI {
@@ -14,6 +14,8 @@ public class SmartHomeGUI {
 
     private JLabel lblGas, lblTemp, lblDust, lblPir, lblDoorlock, lblLedStatus;
     private AtomicBoolean voiceRecording = new AtomicBoolean(false);
+    private final List<JComponent> gatedControls = new ArrayList<>();
+    private boolean unlockedOnce = false;
 
     // 색상 팔레트 (기존 유지)
     private static final Color BG_COLOR = new Color(242, 244, 246);
@@ -28,6 +30,17 @@ public class SmartHomeGUI {
         this.sensorServer = sensorServer;
         this.doorlockServer = doorlockServer;
         this.eventServer = eventServer;
+    }
+
+    private void registerControl(JComponent component) {
+        component.setEnabled(unlockedOnce);
+        gatedControls.add(component);
+    }
+
+    private void setControlsEnabled(boolean enabled) {
+        for (JComponent component : gatedControls) {
+            component.setEnabled(enabled);
+        }
     }
 
     public void showWindow() {
@@ -213,11 +226,15 @@ public class SmartHomeGUI {
         return valueLbl;
     }
 
-    private void addButton(JPanel parent, String text, Color color, java.awt.event.ActionListener l) {
-        ModernButton btn = new ModernButton(text, color);
-        btn.addActionListener(l);
-        parent.add(btn);
-    }
+        for (JButton b : btns) {
+            registerControl(b);
+        }
+        registerControl(sliderR);
+        registerControl(sliderG);
+        registerControl(sliderB);
+        registerControl(btnApplyColor);
+
+        frame.add(rgbPanel, BorderLayout.SOUTH);
 
     private void setupListeners() {
         sensorServer.addSensorListener((gas, temp, dust, pir) -> {
@@ -244,12 +261,22 @@ public class SmartHomeGUI {
         // 음성으로 제어했을 때도 화면 바뀌게 (기존 유지)
         commandServer.addCommandListener(cmd -> {
             SwingUtilities.invokeLater(() -> {
-                if (cmd.contains("LED_ON")) updateLedStatus("LED: ON");
-                else if (cmd.contains("LED_OFF")) updateLedStatus("LED: OFF");
-                else if (cmd.contains("RGB")) updateLedStatus("LED: RGB");
-                
-                // 여기서 다시 sendCommand를 하면 무한루프 돌 수 있으니 제거하거나 주의!
-                // (여기서는 외부에서 온 명령을 단순히 화면에 반영만 하면 됨)
+                lblDoorlock.setText("DOOR: " + event);
+
+                if (event.equals("UNLOCKED")) {
+                    lblDoorlock.setBackground(Color.GREEN);
+                    if (!unlockedOnce) {
+                        unlockedOnce = true;
+                        setControlsEnabled(true);
+                    }
+                } else if (event.equals("LOCKED")) {
+                    lblDoorlock.setBackground(Color.RED);
+                } else if (event.equals("ALERT_FAIL_3")) {
+                    lblDoorlock.setBackground(Color.ORANGE);
+                }
+
+                lblDoorlock.setOpaque(true);
+                eventServer.sendEvent(event);
             });
         });
     }
