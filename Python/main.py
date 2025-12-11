@@ -276,6 +276,12 @@ def listen_java_commands():
                 elif data == "RGB_ON":       speak_answer("무드등을 켰습니다.")
                 elif data == "RGB_OFF":      speak_answer("무드등을 껐습니다.")
                 elif data == "UNLOCK":       speak_answer("문을 열었습니다.")
+                elif data == "PROMPT_AUTH":
+                    speak_answer("얼굴을 보여주세요. 키패드로도 열 수 있습니다.")
+                    # 얼굴 인식도 바로 시작
+                    is_active_recognition = True
+                elif data == "PASSWORD_UNLOCK":
+                    speak_answer("비밀번호 확인. 문을 엽니다.")
 
             sock.close()
         except: time.sleep(3)
@@ -318,7 +324,7 @@ def start_recording():
 def stop_recording():
     global is_recording, audio_chunks
     is_recording = False
-    time.sleep(0.5)
+    time.sleep(0.1)  # shorter wait for faster turnaround
     if not audio_chunks: return None
     return np.concatenate(audio_chunks, axis=0)
 

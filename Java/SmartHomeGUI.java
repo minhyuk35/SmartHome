@@ -1,23 +1,24 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SmartHomeGUI {
 
-    private TcpServer commandServer;
-    private SensorTcpServer sensorServer;
-    private DoorlockServer doorlockServer;
-    private EventTcpServer eventServer;
+    private final TcpServer commandServer;
+    private final SensorTcpServer sensorServer;
+    private final DoorlockServer doorlockServer;
+    private final EventTcpServer eventServer;
 
     private JLabel lblGas, lblTemp, lblDust, lblPir, lblDoorlock, lblLedStatus;
-    private AtomicBoolean voiceRecording = new AtomicBoolean(false);
+    private final AtomicBoolean voiceRecording = new AtomicBoolean(false);
     private final List<JComponent> gatedControls = new ArrayList<>();
     private boolean unlockedOnce = false;
 
-    // 색상 팔레트 (기존 유지)
+    // 색상 팔레트
     private static final Color BG_COLOR = new Color(242, 244, 246);
     private static final Color CARD_COLOR = new Color(255, 255, 255);
     private static final Color TEXT_PRIMARY = new Color(25, 31, 40);
@@ -68,12 +69,12 @@ public class SmartHomeGUI {
         sensorGrid.setBackground(BG_COLOR);
         sensorGrid.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        lblTemp = createSensorCard(sensorGrid, "온습도 센서", "HUMI: ---", "💧");
-        lblGas = createSensorCard(sensorGrid, "가스 센서", "GAS: ---", "🔥");
-        lblDust = createSensorCard(sensorGrid, "미세먼지", "DUST: ---", "💨");
-        lblPir = createSensorCard(sensorGrid, "모션 감지", "PIR: ---", "🏃");
-        lblDoorlock = createSensorCard(sensorGrid, "도어락", "DOOR: ---", "🚪");
-        lblLedStatus = createSensorCard(sensorGrid, "조명 제어", "LED: OFF", "💡");
+        lblTemp = createSensorCard(sensorGrid, "온습도 센서", "HUMI: ---", "\uD83D\uDCA7");
+        lblGas = createSensorCard(sensorGrid, "가스 센서", "GAS: ---", "\uD83D\uDD25");
+        lblDust = createSensorCard(sensorGrid, "미세먼지", "DUST: ---", "\uD83D\uDCA8");
+        lblPir = createSensorCard(sensorGrid, "모션 감지", "PIR: ---", "\uD83C\uDFC3");
+        lblDoorlock = createSensorCard(sensorGrid, "도어락", "DOOR: ---", "\uD83D\uDEAA");
+        lblLedStatus = createSensorCard(sensorGrid, "조명 제어", "LED: OFF", "\uD83D\uDCA1");
 
         sensorGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 350));
         mainContent.add(sensorGrid);
@@ -91,7 +92,7 @@ public class SmartHomeGUI {
         buttonPanel.setBackground(BG_COLOR);
         buttonPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        // 🔥 [핵심 수정] 버튼 클릭 시 즉시 UI 업데이트 + 명령 전송
+        // 조명/가전 제어
         addButton(buttonPanel, "LED ON", TOSS_BLUE, e -> {
             updateLedStatus("LED: ON");
             commandServer.sendCommand("LED_ON");
@@ -100,13 +101,10 @@ public class SmartHomeGUI {
             updateLedStatus("LED: OFF");
             commandServer.sendCommand("LED_OFF");
         });
-        
         addButton(buttonPanel, "FAN ON", TOSS_BLUE, e -> commandServer.sendCommand("FAN_ON"));
         addButton(buttonPanel, "FAN OFF", new Color(200, 200, 200), e -> commandServer.sendCommand("FAN_OFF"));
-        
         addButton(buttonPanel, "SLEEP MODE", new Color(100, 100, 150), e -> commandServer.sendCommand("LIGHT_SLEEP"));
         addButton(buttonPanel, "WARM MODE", new Color(255, 180, 50), e -> commandServer.sendCommand("LIGHT_WARM"));
-        
         addButton(buttonPanel, "RGB ON", new Color(255, 100, 200), e -> {
             updateLedStatus("LED: RGB");
             commandServer.sendCommand("RGB_ON");
@@ -116,19 +114,19 @@ public class SmartHomeGUI {
             commandServer.sendCommand("RGB_OFF");
         });
 
-        // 얼굴/도어 버튼
-        addButton(buttonPanel, "얼굴로 열기", new Color(0, 180, 0), e -> commandServer.sendCommand("REQ_FACE_UNLOCK"));
+        // 잠금 상태에서도 접근 가능한 버튼
+        addButton(buttonPanel, "얼굴로 열기", new Color(0, 180, 0), e -> commandServer.sendCommand("REQ_FACE_UNLOCK"), false);
         addButton(buttonPanel, "얼굴 등록", new Color(50, 50, 50), e -> {
             commandServer.sendCommand("REGISTER_FACE");
             JOptionPane.showMessageDialog(frame, "PC 카메라를 봐주세요.\n's' 키로 저장!");
-        });
-        
+        }, false);
+
         buttonPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 300));
         mainContent.add(buttonPanel);
         mainContent.add(Box.createVerticalStrut(10));
 
         // 음성 버튼
-        ModernButton btnVoice = new ModernButton("🎤 음성 인식", TOSS_BLUE);
+        ModernButton btnVoice = new ModernButton("\uD83C\uDFA4 음성 인식", TOSS_BLUE);
         btnVoice.addActionListener(e -> {
             new Thread(() -> {
                 try {
@@ -136,14 +134,14 @@ public class SmartHomeGUI {
                         sendVoiceCommand("START_RECORDING");
                         voiceRecording.set(true);
                         SwingUtilities.invokeLater(() -> {
-                            btnVoice.setText("⏹ 인식 중지");
+                            btnVoice.setText("\u23F9 인식 중지");
                             btnVoice.setBackgroundColor(TOSS_RED);
                         });
                     } else {
                         sendVoiceCommand("STOP_RECORDING");
                         voiceRecording.set(false);
                         SwingUtilities.invokeLater(() -> {
-                            btnVoice.setText("🎤 음성 인식");
+                            btnVoice.setText("\uD83C\uDFA4 음성 인식");
                             btnVoice.setBackgroundColor(TOSS_BLUE);
                         });
                     }
@@ -152,7 +150,7 @@ public class SmartHomeGUI {
                 }
             }).start();
         });
-        
+
         JPanel voicePanel = new JPanel(new GridLayout(1, 1));
         voicePanel.setBackground(BG_COLOR);
         voicePanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 50));
@@ -180,7 +178,7 @@ public class SmartHomeGUI {
         JSlider sB = new JSlider(0, 100, 0); sB.setBackground(CARD_COLOR);
         sliderBox.add(sR); sliderBox.add(sG); sliderBox.add(sB);
         rgbPanel.add(sliderBox);
-        
+
         ModernButton btnApply = new ModernButton("APPLY COLOR", new Color(50, 50, 50));
         btnApply.setPreferredSize(new Dimension(100, 30));
         btnApply.addActionListener(e -> {
@@ -189,6 +187,12 @@ public class SmartHomeGUI {
         });
         rgbPanel.add(Box.createVerticalStrut(10));
         rgbPanel.add(btnApply);
+
+        // RGB 제어는 인증 이후 사용 가능
+        registerControl(sR);
+        registerControl(sG);
+        registerControl(sB);
+        registerControl(btnApply);
 
         mainContent.add(rgbPanel);
 
@@ -201,11 +205,22 @@ public class SmartHomeGUI {
         frame.setVisible(true);
     }
 
-    // 🔥 [신규] LED 상태 즉시 업데이트 함수
+    private ModernButton addButton(JPanel panel, String text, Color color, ActionListener action) {
+        return addButton(panel, text, color, action, true);
+    }
+
+    private ModernButton addButton(JPanel panel, String text, Color color, ActionListener action, boolean gated) {
+        ModernButton btn = new ModernButton(text, color);
+        btn.addActionListener(action);
+        if (gated) {
+            registerControl(btn);
+        }
+        panel.add(btn);
+        return btn;
+    }
+
     private void updateLedStatus(String status) {
-        SwingUtilities.invokeLater(() -> {
-            lblLedStatus.setText(status);
-        });
+        SwingUtilities.invokeLater(() -> lblLedStatus.setText(status));
     }
 
     private JLabel createSensorCard(JPanel parent, String title, String initVal, String icon) {
@@ -217,7 +232,7 @@ public class SmartHomeGUI {
         titleLbl.setFont(new Font("맑은 고딕", Font.PLAIN, 12));
         titleLbl.setForeground(TEXT_SECONDARY);
         JLabel valueLbl = new JLabel(initVal);
-        valueLbl.setFont(new Font("맑은 고딕", Font.BOLD, 16)); 
+        valueLbl.setFont(new Font("맑은 고딕", Font.BOLD, 16));
         valueLbl.setForeground(TEXT_PRIMARY);
         valueLbl.setHorizontalAlignment(SwingConstants.RIGHT);
         card.add(titleLbl, BorderLayout.NORTH);
@@ -226,58 +241,78 @@ public class SmartHomeGUI {
         return valueLbl;
     }
 
-        for (JButton b : btns) {
-            registerControl(b);
-        }
-        registerControl(sliderR);
-        registerControl(sliderG);
-        registerControl(sliderB);
-        registerControl(btnApplyColor);
-
-        frame.add(rgbPanel, BorderLayout.SOUTH);
-
     private void setupListeners() {
         sensorServer.addSensorListener((gas, temp, dust, pir) -> {
             SwingUtilities.invokeLater(() -> {
                 lblGas.setText("GAS: " + gas);
                 lblTemp.setText("HUMI: " + temp + "%");
-                lblDust.setText("DUST: " + dust + " ㎍/m³");
+                lblDust.setText("DUST: " + dust + " ug/m^3");
                 lblPir.setText("PIR: " + (pir == 1 ? "Motion" : "No Motion"));
-                if(pir == 1) lblPir.setForeground(TOSS_RED);
-                else lblPir.setForeground(TEXT_PRIMARY);
+                lblPir.setForeground(pir == 1 ? TOSS_RED : TEXT_PRIMARY);
             });
         });
 
-        doorlockServer.addDoorlockListener(event -> {
-            SwingUtilities.invokeLater(() -> {
-                lblDoorlock.setText("DOOR: " + event);
-                if (event.equals("UNLOCKED")) lblDoorlock.setForeground(TOSS_BLUE);
-                else if (event.equals("LOCKED")) lblDoorlock.setForeground(TEXT_PRIMARY);
-                else lblDoorlock.setForeground(TOSS_RED);
-                eventServer.sendEvent(event);
-            });
-        });
+        doorlockServer.addDoorlockListener(this::handleDoorEvent);
 
-        // 음성으로 제어했을 때도 화면 바뀌게 (기존 유지)
-        commandServer.addCommandListener(cmd -> {
-            SwingUtilities.invokeLater(() -> {
-                lblDoorlock.setText("DOOR: " + event);
+        // 음성/외부 명령으로 상태가 바뀔 때도 UI 동기화
+        commandServer.addCommandListener(this::handleIncomingCommand);
+    }
 
-                if (event.equals("UNLOCKED")) {
-                    lblDoorlock.setBackground(Color.GREEN);
-                    if (!unlockedOnce) {
-                        unlockedOnce = true;
-                        setControlsEnabled(true);
-                    }
-                } else if (event.equals("LOCKED")) {
-                    lblDoorlock.setBackground(Color.RED);
-                } else if (event.equals("ALERT_FAIL_3")) {
-                    lblDoorlock.setBackground(Color.ORANGE);
+    private void handleIncomingCommand(String rawCmd) {
+        String cmd = rawCmd.trim();
+        if (cmd.startsWith("RGB_SET")) {
+            updateLedStatus("LED: RGB");
+            return;
+        }
+        switch (cmd) {
+            case "LED_ON":
+                updateLedStatus("LED: ON");
+                return;
+            case "LED_OFF":
+                updateLedStatus("LED: OFF");
+                return;
+            case "RGB_ON":
+                updateLedStatus("LED: RGB");
+                return;
+            case "RGB_OFF":
+                updateLedStatus("LED: OFF");
+                return;
+            default:
+                break;
+        }
+
+        if (isDoorEvent(cmd)) {
+            handleDoorEvent(cmd);
+        }
+    }
+
+    private boolean isDoorEvent(String cmd) {
+        String upper = cmd.toUpperCase();
+        return upper.equals("UNLOCK") || upper.equals("UNLOCKED") || upper.equals("LOCKED") || upper.equals("ALERT_FAIL_3");
+    }
+
+    private String normalizeDoorEvent(String event) {
+        String upper = event.toUpperCase();
+        if (upper.equals("UNLOCK")) return "UNLOCKED";
+        return upper;
+    }
+
+    private void handleDoorEvent(String event) {
+        String normalized = normalizeDoorEvent(event);
+        SwingUtilities.invokeLater(() -> {
+            lblDoorlock.setText("DOOR: " + normalized);
+            if (normalized.equals("UNLOCKED")) {
+                lblDoorlock.setForeground(TOSS_BLUE);
+                if (!unlockedOnce) {
+                    unlockedOnce = true;
+                    setControlsEnabled(true);
                 }
-
-                lblDoorlock.setOpaque(true);
-                eventServer.sendEvent(event);
-            });
+            } else if (normalized.equals("LOCKED")) {
+                lblDoorlock.setForeground(TEXT_PRIMARY);
+            } else {
+                lblDoorlock.setForeground(TOSS_RED);
+            }
+            eventServer.sendEvent(normalized);
         });
     }
 
@@ -319,8 +354,7 @@ public class SmartHomeGUI {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            if (getModel().isPressed()) g2.setColor(bgColor.darker());
-            else g2.setColor(bgColor);
+            g2.setColor(getModel().isPressed() ? bgColor.darker() : bgColor);
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 20, 20);
             g2.dispose();
             super.paintComponent(g);
