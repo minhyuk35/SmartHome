@@ -1,6 +1,6 @@
 """
 [종합 PC 비서]
-Whisper 음성 + Google TTS + GUI 제어 + 🔥버튼식 얼굴 인식 (안정화 버전)
+Whisper 음성 + Google TTS + GUI 제어 + 🔥버튼식 얼굴 인식 (패킷 분리 + 카메라 안정화)
 """
 
 import socket
@@ -26,16 +26,15 @@ VOICE_SERVER_PORT = 40191
 DOOR_EVENT_PORT = 39189
 
 # 상태 플래그
-is_registering_mode = False   # 등록 모드 확인
-is_active_recognition = False # 인식 모드 확인 (버튼 누를 때만 True)
-my_command_lock = False       # 메아리 방지
+is_registering_mode = False   
+is_active_recognition = False 
+my_command_lock = False       
 
 # ================================
 # 🔊 TTS 및 통신
 # ================================
 def speak_answer(text):
     try:
-        # print(f"[TTS] 💬 {text}")
         enc_text = urllib.parse.quote(text)
         url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={enc_text}&tl=ko&client=tw-ob"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -43,7 +42,6 @@ def speak_answer(text):
         response = requests.get(url, headers=headers)
         filename = "pc_voice_temp.mp3"
         
-        # 기존 파일 삭제 (충돌 방지)
         if os.path.exists(filename):
             try: os.remove(filename)
             except: pass
@@ -52,8 +50,6 @@ def speak_answer(text):
             f.write(response.content)
             
         playsound(filename)
-        
-        # 재생 후 삭제
         try: os.remove(filename)
         except: pass
     except: pass
@@ -82,7 +78,7 @@ def send_to_java(cmd):
     return False
 
 # ================================
-# 📸 얼굴 등록 모드 (메모리 패치 적용)
+# 📸 얼굴 등록 모드 (메모리 패치 + 윈도우 카메라 호환)
 # ================================
 def start_face_registration():
     global is_registering_mode
@@ -91,8 +87,8 @@ def start_face_registration():
     print("📸 [얼굴 등록] 카메라 가동...")
     speak_answer("얼굴 등록 모드입니다.")
     
-    # 카메라 0번 (안 되면 1번으로 변경)
-    cap = cv2.VideoCapture(0)
+    # 🔥 [중요] 윈도우에서는 CAP_DSHOW를 써야 카메라가 빨리 켜짐
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     
     if not cap.isOpened():
         print("❌ 카메라를 열 수 없습니다.")
@@ -113,13 +109,8 @@ def start_face_registration():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('s'): 
             try:
-                # 1. BGR -> RGB 변환 (OpenCV 함수 사용)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # 2. 메모리 강제 정렬 (dlib 오류 해결 핵심)
                 rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
-                
-                # 3. 얼굴 찾기
                 boxes = face_recognition.face_locations(rgb)
                 
                 if boxes:
@@ -146,44 +137,42 @@ def start_face_registration():
     print("👀 다시 대기 모드")
 
 # ================================
-# 👁️ [핵심] 버튼식 얼굴 인식 스레드 (안정화)
+# 👁️ [핵심] 버튼식 얼굴 인식 스레드 (쿨타임+카메라 안정화)
 # ================================
 def face_recognition_loop():
     global is_active_recognition, is_registering_mode
     print("[Face] 🙂 대기 중 (버튼을 누르면 켜집니다)")
     
     video_capture = None
-    last_unlock_time = 0 # 쿨타임 계산용
+    last_unlock_time = 0 
 
     while True:
-        # 1. 카메라를 꺼야 하는 조건 확인
-        # (활성화 요청 없음 OR 등록 중 OR 쿨타임 10초 미만)
         current_time = time.time()
         is_cooldown = (current_time - last_unlock_time < 10)
 
+        # 1. 카메라 끄기 조건 (비활성 OR 등록중 OR 쿨타임)
         if not is_active_recognition or is_registering_mode or is_cooldown:
             if video_capture is not None:
                 video_capture.release()
                 video_capture = None
-                if is_cooldown: 
-                    print(f"[Face] ⏳ 쿨타임 대기 ({10 - int(current_time - last_unlock_time)}초)")
-                else:
-                    print("[Face] 💤 카메라 대기 모드")
+                if is_cooldown: print(f"[Face] ⏳ 쿨타임... {int(10 - (current_time - last_unlock_time))}초 남음")
+                else: print("[Face] 💤 카메라 꺼짐 (대기)")
             
-            # 대기 중일 땐 CPU를 쉬게 해줌
-            time.sleep(1) 
+            time.sleep(1)
             continue
 
         # 2. 카메라 켜기
         if video_capture is None:
-            video_capture = cv2.VideoCapture(0)
+            # 🔥 [중요] CAP_DSHOW 추가 (윈도우 전용)
+            video_capture = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            
             if not video_capture.isOpened():
                 speak_answer("카메라를 켤 수 없습니다.")
                 is_active_recognition = False
                 continue
-            print("[Face] 📸 카메라 작동 시작! 얼굴 찾는 중...")
+            print("[Face] 📸 카메라 ON! 얼굴 찾는 중...")
 
-        # 3. 데이터 로드
+        # 3. 데이터 로드 (파일 없을 때 예외처리)
         try: owner_encoding = np.load("owner_face.npy")
         except: 
             speak_answer("먼저 얼굴 등록을 해주세요.")
@@ -196,8 +185,6 @@ def face_recognition_loop():
         # 4. 인식 시도
         try:
             small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-            
-            # [안전 변환]
             rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
             rgb_small_frame = np.ascontiguousarray(rgb_small_frame, dtype=np.uint8)
             
@@ -213,11 +200,8 @@ def face_recognition_loop():
                         speak_answer("주인님이시군요. 문을 열어드립니다.")
                         send_to_java("UNLOCK")
                         
-                        # 성공 시점 기록 (쿨타임 시작)
-                        last_unlock_time = time.time()
-                        
-                        # 인식 완료했으니 즉시 종료 (다음 루프에서 카메라 꺼짐)
-                        is_active_recognition = False 
+                        last_unlock_time = time.time() # 쿨타임 시작
+                        is_active_recognition = False  # 카메라 끄기 요청
                         break 
         except: pass
 
@@ -229,7 +213,7 @@ face_thread.start()
 
 
 # ================================
-# 👂 Java GUI 버튼 감시자
+# 👂 [수정됨] Java GUI 버튼 감시자 (패킷 분리 적용)
 # ================================
 def listen_java_commands():
     global is_active_recognition
@@ -240,42 +224,48 @@ def listen_java_commands():
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((JAVA_IP, CMD_PORT))
             while True:
-                data = sock.recv(1024).decode().strip()
-                if not data: break
-                if my_command_lock: continue
-
-                print(f"[GUI 수신] {data}")
+                # 데이터 수신
+                raw_data = sock.recv(1024).decode()
+                if not raw_data: break
                 
-                # 1. 얼굴 인식 요청
-                if data == "REQ_FACE_UNLOCK":
-                    print("📸 얼굴 인식 요청됨! 10초간 시도")
-                    speak_answer("정면을 봐주세요.")
-                    is_active_recognition = True
+                # 🔥 [핵심 수정] 뭉쳐온 데이터 쪼개기 (split)
+                commands = raw_data.split('\n')
+                
+                for data in commands:
+                    data = data.strip()
+                    if not data: continue # 빈 줄 무시
                     
-                    # 10초 뒤 타임아웃 처리
-                    def timeout_timer():
-                        time.sleep(10)
-                        global is_active_recognition
-                        if is_active_recognition:
-                            print("⏰ 타임아웃: 얼굴 인식 실패")
-                            is_active_recognition = False
-                            speak_answer("얼굴이 확인되지 않았습니다.")
-                    threading.Thread(target=timeout_timer).start()
+                    if my_command_lock: continue
 
-                # 2. 얼굴 등록 요청
-                elif data == "REGISTER_FACE":
-                    threading.Thread(target=start_face_registration).start()
-                
-                # 3. 일반 제어 (TTS 피드백 복구됨!)
-                elif data == "LED_ON":       speak_answer("조명을 켰습니다.")
-                elif data == "LED_OFF":      speak_answer("조명을 껐습니다.")
-                elif data == "FAN_ON":       speak_answer("선풍기를 켰습니다.")
-                elif data == "FAN_OFF":      speak_answer("선풍기를 껐습니다.")
-                elif data == "LIGHT_SLEEP":  speak_answer("수면 모드를 실행합니다.")
-                elif data == "LIGHT_WARM":   speak_answer("따뜻한 조명으로 바꿨습니다.")
-                elif data == "RGB_ON":       speak_answer("무드등을 켰습니다.")
-                elif data == "RGB_OFF":      speak_answer("무드등을 껐습니다.")
-                elif data == "UNLOCK":       speak_answer("문을 열었습니다.")
+                    print(f"[GUI 수신] {data}")
+                    
+                    if data == "REQ_FACE_UNLOCK":
+                        print("📸 얼굴 인식 요청됨! (10초 타임아웃)")
+                        speak_answer("정면을 봐주세요.")
+                        is_active_recognition = True
+                        
+                        # 타임아웃 스레드
+                        def timeout_timer():
+                            time.sleep(10)
+                            global is_active_recognition
+                            if is_active_recognition:
+                                print("⏰ 타임아웃")
+                                is_active_recognition = False
+                                speak_answer("얼굴이 확인되지 않았습니다.")
+                        threading.Thread(target=timeout_timer).start()
+
+                    elif data == "REGISTER_FACE":
+                        threading.Thread(target=start_face_registration).start()
+                    
+                    elif data == "LED_ON":       speak_answer("조명을 켰습니다.")
+                    elif data == "LED_OFF":      speak_answer("조명을 껐습니다.")
+                    elif data == "FAN_ON":       speak_answer("선풍기를 켰습니다.")
+                    elif data == "FAN_OFF":      speak_answer("선풍기를 껐습니다.")
+                    elif data == "LIGHT_SLEEP":  speak_answer("수면 모드를 실행합니다.")
+                    elif data == "LIGHT_WARM":   speak_answer("따뜻한 조명으로 바꿨습니다.")
+                    elif data == "RGB_ON":       speak_answer("무드등을 켰습니다.")
+                    elif data == "RGB_OFF":      speak_answer("무드등을 껐습니다.")
+                    elif data == "UNLOCK":       speak_answer("문을 열었습니다.")
 
             sock.close()
         except: time.sleep(3)
