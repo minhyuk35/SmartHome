@@ -195,7 +195,8 @@ def face_recognition_loop():
 
         # 4. 인식 시도
         try:
-            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+            # 다운스케일은 적당히(0.5)만 적용해 인식률 확보
+            small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
             
             # [안전 변환]
             rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
@@ -206,7 +207,8 @@ def face_recognition_loop():
             if face_locations:
                 face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
                 for face_encoding in face_encodings:
-                    matches = face_recognition.compare_faces([owner_encoding], face_encoding, tolerance=0.45)
+                    # 너비가 넓은 표본을 허용해 등록된 얼굴과의 매칭을 높임
+                    matches = face_recognition.compare_faces([owner_encoding], face_encoding, tolerance=0.60)
                     
                     if True in matches:
                         print("[Face] 🔓 주인님 확인됨!")
@@ -337,19 +339,24 @@ def audio_to_file(audio):
 def process_command(text):
     print(f"[STT] 🗣️ {text}")
     text = text.lower()
-    if "불 켜" in text:
+    compact = text.replace(" ", "")
+
+    def has(cmds):
+        return any((kw in text) or (kw.replace(" ", "") in compact) for kw in cmds)
+
+    if has(("불 켜", "불켜", "조명 켜", "전등 켜", "조명켜", "전등켜", "불 켜줘", "불켜줘")):
         speak_answer("네, 조명을 켜겠습니다.")
         send_to_java("LED_ON")
-    elif "불 꺼" in text:
+    elif has(("불 꺼", "불꺼", "조명 꺼", "전등 꺼", "조명꺼", "전등꺼", "불 꺼줘", "불꺼줘")):
         speak_answer("조명을 끕니다.")
         send_to_java("LED_OFF")
-    elif "선풍기 켜" in text:
+    elif has(("선풍기 켜", "선풍기켜", "팬 켜", "팬켜", "선풍기 켜줘", "선풍기켜줘")):
         speak_answer("선풍기를 켭니다.")
         send_to_java("FAN_ON")
-    elif "선풍기 꺼" in text:
+    elif has(("선풍기 꺼", "선풍기꺼", "팬 꺼", "팬꺼", "선풍기 꺼줘", "선풍기꺼줘")):
         speak_answer("선풍기를 끕니다.")
         send_to_java("FAN_OFF")
-    elif "문 열어" in text:
+    elif has(("문 열어", "문열어", "문 열어줘", "문열어줘", "문 좀 열어")):
         speak_answer("문을 엽니다.")
         send_to_java("UNLOCK")
 
@@ -366,16 +373,24 @@ def stop_recording_and_process():
     except: pass
 
 def listen_door_events():
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((JAVA_IP, DOOR_EVENT_PORT))
-        while True:
-            data = sock.recv(1024).decode().strip()
-            if not data: break
-            if data == "UNLOCKED":
-                start_recording()
-        sock.close()
-    except: pass
+    while True:
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((JAVA_IP, DOOR_EVENT_PORT))
+            while True:
+                data = sock.recv(1024).decode().strip()
+                if not data:
+                    break
+                if data.upper().startswith("UNLOCK"):
+                    start_recording()
+        except:
+            time.sleep(2)
+        finally:
+            try:
+                if sock: sock.close()
+            except:
+                pass
 threading.Thread(target=listen_door_events, daemon=True).start()
 
 def listen_voice_server():

@@ -8,10 +8,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * Multi-client TCP command server (Spring replacement).
+ * - Broadcasts incoming commands to other clients.
+ * - Notifies GUI via CommandListener.
+ */
 public class TcpServer {
 
-    private int port;
-    // 동기화된 리스트로 여러 클라이언트(PC, 주피터) 안전하게 관리
+    private final int port;
     private final List<PrintWriter> clients = Collections.synchronizedList(new ArrayList<>());
     private CommandListener commandListener;
 
@@ -28,56 +32,64 @@ public class TcpServer {
     }
 
     public void start() {
-        new Thread(() -> {
+        Thread t = new Thread(() -> {
             try (ServerSocket serverSocket = new ServerSocket(port)) {
-                System.out.println("[JAVA] 명령 서버(TcpServer) 시작, 포트: " + port);
+                System.out.println("[JAVA] Command server listening on port " + port);
 
                 while (true) {
                     Socket clientSocket = serverSocket.accept();
-                    // 클라이언트 접속 시 로그 출력
-                    System.out.println("[JAVA] 명령 클라이언트 접속: " + clientSocket.getInetAddress());
+                    System.out.println("[JAVA] Command client connected: " + clientSocket.getInetAddress());
 
                     PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true);
                     clients.add(writer);
 
-                    new Thread(() -> {
-                        try {
-                            BufferedReader in = new BufferedReader(
-                                    new InputStreamReader(clientSocket.getInputStream())
-                            );
-                            String line;
-                            while ((line = in.readLine()) != null) {
-                                System.out.println("[JAVA] 명령 수신: " + line);
-                                if (commandListener != null) {
-                                    commandListener.onCommand(line.trim());
-                                }
-                            }
-                        } catch (IOException e) {
-                            // 연결 끊김 처리
-                        } finally {
-                            clients.remove(writer);
-                            System.out.println("[JAVA] 클라이언트 연결 해제됨");
-                            try { clientSocket.close(); } catch (Exception ignored) {}
-                        }
-                    }).start();
+                    Thread reader = new Thread(() -> handleClient(clientSocket, writer), "command-reader");
+                    reader.setDaemon(true);
+                    reader.start();
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             }
-        }).start();
+        }, "command-server");
+        t.setDaemon(true);
+        t.start();
     }
 
-    // [핵심] 모든 연결된 기기(PC, 주피터)에 명령 전송
-    public void sendCommand(String cmd) {
+    private void handleClient(Socket clientSocket, PrintWriter writer) {
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()))) {
+            String line;
+            while ((line = in.readLine()) != null) {
+                String cmd = line.trim();
+                if (cmd.isEmpty()) continue;
+                System.out.println("[JAVA] Command received: " + cmd);
+                if (commandListener != null) {
+                    commandListener.onCommand(cmd);
+                }
+                broadcast(cmd, writer);
+            }
+        } catch (IOException ignored) {
+        } finally {
+            clients.remove(writer);
+            System.out.println("[JAVA] Command client disconnected");
+            try { clientSocket.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    // Broadcast to all clients (except sender when provided)
+    private void broadcast(String cmd, PrintWriter sender) {
         synchronized (clients) {
             for (PrintWriter out : new ArrayList<>(clients)) {
                 try {
-                    out.println(cmd);
-                    // System.out.println("[JAVA] 전송 -> " + cmd); // 로그 필요하면 주석 해제
+                    if (out != sender) out.println(cmd);
                 } catch (Exception e) {
                     clients.remove(out);
                 }
             }
         }
+    }
+
+    // Send command originated from GUI to every client
+    public void sendCommand(String cmd) {
+        broadcast(cmd, null);
     }
 }

@@ -11,12 +11,13 @@ public class SmartHomeGUI {
     private final TcpServer commandServer;
     private final SensorTcpServer sensorServer;
     private final DoorlockServer doorlockServer;
-    private final EventTcpServer eventServer;
 
     private JLabel lblGas, lblTemp, lblDust, lblPir, lblDoorlock, lblLedStatus;
     private final AtomicBoolean voiceRecording = new AtomicBoolean(false);
     private final List<JComponent> gatedControls = new ArrayList<>();
     private boolean unlockedOnce = false;
+    private long lastPirTriggerMs = 0L;
+    private static final long PIR_COOLDOWN_MS = 5000;
 
     // 색상 팔레트
     private static final Color BG_COLOR = new Color(242, 244, 246);
@@ -26,11 +27,10 @@ public class SmartHomeGUI {
     private static final Color TOSS_BLUE = new Color(49, 130, 246);
     private static final Color TOSS_RED = new Color(255, 80, 80);
 
-    public SmartHomeGUI(TcpServer commandServer, SensorTcpServer sensorServer, DoorlockServer doorlockServer, EventTcpServer eventServer) {
+    public SmartHomeGUI(TcpServer commandServer, SensorTcpServer sensorServer, DoorlockServer doorlockServer) {
         this.commandServer = commandServer;
         this.sensorServer = sensorServer;
         this.doorlockServer = doorlockServer;
-        this.eventServer = eventServer;
     }
 
     private void registerControl(JComponent component) {
@@ -250,12 +250,25 @@ public class SmartHomeGUI {
                 lblPir.setText("PIR: " + (pir == 1 ? "Motion" : "No Motion"));
                 lblPir.setForeground(pir == 1 ? TOSS_RED : TEXT_PRIMARY);
             });
+            handlePirAuth(pir);
         });
 
         doorlockServer.addDoorlockListener(this::handleDoorEvent);
 
         // 음성/외부 명령으로 상태가 바뀔 때도 UI 동기화
         commandServer.addCommandListener(this::handleIncomingCommand);
+    }
+
+    private void handlePirAuth(int pir) {
+        if (pir != 1) return;
+        if (unlockedOnce) return;
+        long now = System.currentTimeMillis();
+        if (now - lastPirTriggerMs < PIR_COOLDOWN_MS) return;
+        lastPirTriggerMs = now;
+        // mimic Spring web flow: prompt auth + request face unlock
+        commandServer.sendCommand("PROMPT_AUTH");
+        commandServer.sendCommand("REQ_FACE_UNLOCK");
+        System.out.println("[JAVA] PIR detected -> auth flow triggered");
     }
 
     private void handleIncomingCommand(String rawCmd) {
@@ -312,7 +325,6 @@ public class SmartHomeGUI {
             } else {
                 lblDoorlock.setForeground(TOSS_RED);
             }
-            eventServer.sendEvent(normalized);
         });
     }
 
