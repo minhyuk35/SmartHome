@@ -31,5 +31,3 @@ PC와 POP 보드로 구성된 스마트홈 과제용 프로젝트입니다. 음�
 - `Java/SmartHomeGUI.java` : Swing 기반 제어 UI, RGB 슬라이더, 음성 토글, 얼굴 등록/인증 버튼.
 - `spring-app/` : `TcpCommandServer`, `SensorTcpServer`, `DoorEventTcpServer`로 TCP 수신 후 WebSocket 브로드캐스트. `application.properties`로 포트(8080) 설정.
 - `Jupyter/README_FIXES.md` : POP 환경 설정 및 포트/메시지 예시 정리.
-
-과제 제출용으로 README만 수정했으며, 코드에는 손대지 않았습니다.
