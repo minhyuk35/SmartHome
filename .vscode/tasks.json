@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "spring-build",
+      "type": "shell",
+      "command": "mvnd",
+      "args": ["-q", "-DskipTests", "package"],
+      "options": {
+        "cwd": "${workspaceFolder}/spring-app"
+      },
+      "problemMatcher": ["$javac"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "spring-run",
+      "type": "shell",
+      "command": "mvnd",
+      "args": ["spring-boot:run"],
+      "options": {
+        "cwd": "${workspaceFolder}/spring-app"
+      },
+      "problemMatcher": "$javac",
+      "dependsOn": "spring-build",
+      "isBackground": true
+    }
+  ]
+}
