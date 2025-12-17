@@ -1,8 +1,0 @@
-com\smarthome\web\config\WebSocketConfig.class
-com\smarthome\web\ws\WebSocketBroadcaster.class
-com\smarthome\web\SmartHomeWebApplication.class
-com\smarthome\web\service\VoiceClient.class
-com\smarthome\web\tcp\SensorTcpServer.class
-com\smarthome\web\service\CommandService.class
-com\smarthome\web\ws\ControlWebSocketHandler.class
-com\smarthome\web\tcp\TcpCommandServer.class
