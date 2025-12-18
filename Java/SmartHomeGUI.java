@@ -15,12 +15,14 @@ public class SmartHomeGUI {
     private final SensorTcpServer sensorServer;
     private final DoorlockServer doorlockServer;
 
-    private JLabel lblGas, lblTemp, lblDust, lblPir, lblDoorlock, lblLedStatus;
+    private JLabel lblGas, lblHumi, lblDust, lblPir, lblDoorlock, lblLedStatus;
     private final AtomicBoolean voiceRecording = new AtomicBoolean(false);
     private final List<JComponent> gatedControls = new ArrayList<>();
-    private boolean unlockedOnce = false;
+    private boolean controlsUnlocked = false;
     private long lastPirTriggerMs = 0L;
     private static final long PIR_COOLDOWN_MS = 5000;
+    private static final String VOICE_HOST = "127.0.0.1";
+    private static final int VOICE_PORT = 40191;
 
     // 🔥 [다크 모드 팔레트]
     private static final Color BG_COLOR = new Color(30, 30, 40);       
@@ -53,7 +55,7 @@ public class SmartHomeGUI {
     }
 
     private void registerControl(JComponent component) {
-        component.setEnabled(unlockedOnce);
+        component.setEnabled(controlsUnlocked);
         gatedControls.add(component);
     }
 
@@ -106,7 +108,7 @@ public class SmartHomeGUI {
         sensorGrid.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         // 🔥 [아이콘 제거] 텍스트와 컬러 바로만 승부!
-        lblTemp = createSensorCard(sensorGrid, "Humidity", "--- %", NEON_BLUE);
+        lblHumi = createSensorCard(sensorGrid, "Humidity", "--- %", NEON_BLUE);
         lblGas = createSensorCard(sensorGrid, "Gas Level", "---", NEON_RED);
         lblDust = createSensorCard(sensorGrid, "Fine Dust", "---", NEON_YELLOW);
         lblPir = createSensorCard(sensorGrid, "Motion", "---", NEON_PURPLE);
@@ -307,10 +309,10 @@ public class SmartHomeGUI {
     }
 
     private void setupListeners() {
-        sensorServer.addSensorListener((gas, temp, dust, pir) -> {
+        sensorServer.addSensorListener((gas, humi, dust, pir) -> {
             SwingUtilities.invokeLater(() -> {
                 lblGas.setText(gas);
-                lblTemp.setText(temp + "%");
+                lblHumi.setText(humi + "%");
                 lblDust.setText(dust + " ug");
                 lblPir.setText(pir == 1 ? "DETECTED" : "SAFE");
                 lblPir.setForeground(pir == 1 ? NEON_RED : TEXT_WHITE);
@@ -330,11 +332,10 @@ public class SmartHomeGUI {
 
     private void handlePirAuth(int pir) {
         if (pir != 1) return;
-        if (unlockedOnce) return;
+        if (controlsUnlocked) return;
         long now = System.currentTimeMillis();
         if (now - lastPirTriggerMs < PIR_COOLDOWN_MS) return;
         lastPirTriggerMs = now;
-        commandServer.sendCommand("PROMPT_AUTH");
         commandServer.sendCommand("REQ_FACE_UNLOCK");
     }
 
@@ -363,17 +364,20 @@ public class SmartHomeGUI {
             lblDoorlock.setText(normalized);
             if (normalized.equals("UNLOCKED")) {
                 lblDoorlock.setForeground(NEON_GREEN);
-                if (!unlockedOnce) { unlockedOnce = true; setControlsEnabled(true); }
+                if (!controlsUnlocked) { controlsUnlocked = true; setControlsEnabled(true); }
             } else if (normalized.equals("LOCKED")) { lblDoorlock.setForeground(TEXT_WHITE);
             } else { lblDoorlock.setForeground(NEON_RED); }
         });
     }
 
     private void sendVoiceCommand(String msg) throws Exception {
-        java.net.Socket s = new java.net.Socket("127.0.0.1", 40191);
-        java.io.PrintWriter out = new java.io.PrintWriter(s.getOutputStream(), true);
-        out.println(msg);
-        out.close(); s.close();
+        try (java.net.Socket socket = new java.net.Socket(VOICE_HOST, VOICE_PORT);
+             java.io.PrintWriter out = new java.io.PrintWriter(
+                     new java.io.OutputStreamWriter(socket.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8),
+                     true
+             )) {
+            out.println(msg);
+        }
     }
 
     // --- Custom UI Classes ---

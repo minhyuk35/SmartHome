@@ -1,16 +1,18 @@
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * Multi-client TCP command server (Spring replacement).
- * - Broadcasts incoming commands to other clients.
+ * Multi-client TCP command server.
+ * - Broadcasts incoming commands to other clients (Python, POP, etc.).
  * - Notifies GUI via CommandListener.
  */
 public class TcpServer {
@@ -40,7 +42,10 @@ public class TcpServer {
                     Socket clientSocket = serverSocket.accept();
                     System.out.println("[JAVA] Command client connected: " + clientSocket.getInetAddress());
 
-                    PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true);
+                    PrintWriter writer = new PrintWriter(
+                            new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8),
+                            true
+                    );
                     clients.add(writer);
 
                     Thread reader = new Thread(() -> handleClient(clientSocket, writer), "command-reader");
@@ -56,7 +61,9 @@ public class TcpServer {
     }
 
     private void handleClient(Socket clientSocket, PrintWriter writer) {
-        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()))) {
+        try (BufferedReader in = new BufferedReader(
+                new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8)
+        )) {
             String line;
             while ((line = in.readLine()) != null) {
                 String cmd = line.trim();
